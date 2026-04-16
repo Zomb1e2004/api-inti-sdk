@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+
+    "strict": true,
+
+    "declaration": true,
+    "sourceMap": true,
+
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["src", "tests/test.ts"]
+}
