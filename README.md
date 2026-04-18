@@ -131,20 +131,34 @@ Este package lanza errores cuando:
 - La API responde con error (por ejemplo: `[401] No autorizado`)
 
 Todos los errores del SDK son instancias de `ApiIntiError`.
+Ademas de `message`, exponen:
+
+- `status`: codigo HTTP si existe
+- `code`: codigo de error de la API (si la API lo envia)
+- `rateLimit`: metadatos de limite (`limit`, `remaining`, `reset`) si vienen en headers
+
+Tambien puedes usar `isRetryableError(error)` para decidir reintentos automáticos.
 
 Ejemplo:
 
 ```ts
-import { ApiInti, ApiIntiError } from "api-inti";
+import { ApiInti, ApiIntiError, isRetryableError } from "api-inti";
 
 try {
   const data = await api.getInfoByDni("12345678");
   console.log(data);
 } catch (error) {
   if (error instanceof ApiIntiError) {
-    console.error(error.message, error.status);
+    console.error(error.message);
+    console.error("status:", error.status);
+    console.error("code:", error.code);
+    console.error("rateLimit:", error.rateLimit);
   } else {
     console.error("Error inesperado", error);
+  }
+
+  if (isRetryableError(error)) {
+    console.log("Error temporal: puedes reintentar la solicitud.");
   }
 }
 ```

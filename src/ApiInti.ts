@@ -16,18 +16,72 @@ export interface ApiIntiOptions {
   timeout?: number;
 }
 
+export interface ApiIntiRateLimitInfo {
+  limit?: number;
+  remaining?: number;
+  reset?: string;
+}
+
 export class ApiIntiError extends Error {
   readonly status?: number;
+  readonly code?: string;
+  readonly rateLimit?: ApiIntiRateLimitInfo;
+  readonly cause?: unknown;
 
-  constructor(message: string, status?: number) {
+  constructor(
+    message: string,
+    status?: number,
+    code?: string,
+    rateLimit?: ApiIntiRateLimitInfo,
+    cause?: unknown,
+  ) {
     super(message);
     this.name = "ApiIntiError";
     this.status = status;
+    this.code = code;
+    this.rateLimit = rateLimit;
+    this.cause = cause;
   }
+}
+
+/**
+ * Indica si un error es apto para reintentos automáticos.
+ *
+ * Casos considerados reintentables:
+ * - Timeouts o errores de red del cliente.
+ * - HTTP 408, 425, 429.
+ * - HTTP 5xx (500-504).
+ * - Codigo de API `RATE_LIMITED`.
+ *
+ * @param error Error desconocido a evaluar.
+ * @returns `true` si conviene reintentar la solicitud.
+ */
+export function isRetryableError(error: unknown): boolean {
+  if (!(error instanceof ApiIntiError)) return false;
+
+  if (error.code === "TIMEOUT" || error.code === "NETWORK_ERROR") return true;
+  if (error.code === "RATE_LIMITED") return true;
+
+  const status = error.status;
+  if (typeof status !== "number") return false;
+
+  if (status === 408 || status === 425 || status === 429) return true;
+  if (status >= 500 && status <= 504) return true;
+
+  return false;
 }
 
 interface ApiResponse<T> {
   data: T;
+}
+
+interface ApiErrorPayload {
+  message?: string;
+  code?: string;
+  error?: {
+    message?: string;
+    code?: string;
+  };
 }
 
 const endpoints = {
@@ -77,10 +131,48 @@ class ApiInti {
 
     this.http.interceptors.response.use(
       (res) => res,
-      (error: AxiosError<{ message?: string }>) => {
+      (error: AxiosError<ApiErrorPayload>) => {
+        if (!error.response) {
+          if (error.code === "ECONNABORTED") {
+            throw new ApiIntiError(
+              "Timeout agotado al consultar ApiInti. Intenta nuevamente.",
+              undefined,
+              "TIMEOUT",
+              undefined,
+              error,
+            );
+          }
+          throw new ApiIntiError(
+            "No se pudo conectar con ApiInti. Verifica tu red e intenta nuevamente.",
+            undefined,
+            error.code ?? "NETWORK_ERROR",
+            undefined,
+            error,
+          );
+        }
+
         const status = error.response?.status;
-        const message = error.response?.data?.message ?? "Error en la API";
-        throw new ApiIntiError(status ? `[${status}] ${message}` : message, status);
+        const responseData = error.response.data;
+        const apiCode = responseData?.error?.code ?? responseData?.code;
+        const apiMessage =
+          responseData?.error?.message ??
+          responseData?.message ??
+          "Error en la API";
+        const rateLimit: ApiIntiRateLimitInfo = {
+          limit: this.parseHeaderNumber(error.response.headers["x-ratelimit-limit"]),
+          remaining: this.parseHeaderNumber(
+            error.response.headers["x-ratelimit-remaining"],
+          ),
+          reset: this.parseHeaderString(error.response.headers["x-ratelimit-reset"]),
+        };
+
+        throw new ApiIntiError(
+          status ? `[${status}${apiCode ? `:${apiCode}` : ""}] ${apiMessage}` : apiMessage,
+          status,
+          apiCode,
+          rateLimit,
+          error,
+        );
       },
     );
   }
@@ -227,6 +319,18 @@ class ApiInti {
     if (!this.token) throw new ApiIntiError("Token no configurado");
     if (!regex.test(normalizedValue)) throw new ApiIntiError(message);
     return normalizedValue;
+  }
+
+  private parseHeaderNumber(value: unknown): number | undefined {
+    const firstValue = Array.isArray(value) ? value[0] : value;
+    if (typeof firstValue !== "string") return undefined;
+    const parsed = Number(firstValue);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private parseHeaderString(value: unknown): string | undefined {
+    const firstValue = Array.isArray(value) ? value[0] : value;
+    return typeof firstValue === "string" ? firstValue : undefined;
   }
 
   /**
