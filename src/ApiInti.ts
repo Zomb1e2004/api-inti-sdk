@@ -8,106 +8,239 @@ import type {
 } from "./types/types";
 
 const BASE_URL = "https://app.apiinti.dev/api/v1";
+const DEFAULT_TIMEOUT = 10000;
+
+export interface ApiIntiOptions {
+  token?: string;
+  baseURL?: string;
+  timeout?: number;
+}
+
+export class ApiIntiError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "ApiIntiError";
+    this.status = status;
+  }
+}
+
+interface ApiResponse<T> {
+  data: T;
+}
+
+const endpoints = {
+  rucInfo: (ruc: string) => `/ruc/${ruc}`,
+  rucEstablishments: (ruc: string) => `/ruc/${ruc}/establecimientos`,
+  rucDomicile: (ruc: string) => `/ruc/${ruc}/domicilio`,
+  dniRuc: (dni: string) => `/dni/${dni}/ruc`,
+  dniInfo: (dni: string) => `/dni/${dni}`,
+};
 
 class ApiInti {
   private token = "";
   private readonly http: AxiosInstance;
 
-  constructor() {
-    this.http = axios.create({ baseURL: BASE_URL });
+  /**
+   * Crea una nueva instancia del cliente ApiInti.
+   *
+   * Este cliente envuelve llamadas HTTP a `https://app.apiinti.dev/api/v1`
+   * y agrega automaticamente el header `Authorization: Bearer <token>`
+   * cuando el token esta configurado.
+   *
+   * Puedes inicializarlo con token desde el constructor o configurarlo luego
+   * con `configToken`.
+   *
+   * @param options Token string o configuracion avanzada.
+   */
+  constructor(options?: string | ApiIntiOptions) {
+    const normalizedOptions: ApiIntiOptions =
+      typeof options === "string" ? { token: options } : (options ?? {});
+
+    this.http = axios.create({
+      baseURL: normalizedOptions.baseURL ?? BASE_URL,
+      timeout: normalizedOptions.timeout ?? DEFAULT_TIMEOUT,
+    });
+
+    if (normalizedOptions.token?.trim()) {
+      this.token = normalizedOptions.token.trim();
+    }
 
     this.http.interceptors.request.use((config) => {
-      config.headers.Authorization = `Bearer ${this.token}`;
+      config.headers = config.headers ?? {};
+      if (this.token) {
+        config.headers.Authorization = `Bearer ${this.token}`;
+      }
       return config;
     });
 
     this.http.interceptors.response.use(
       (res) => res,
       (error: AxiosError<{ message?: string }>) => {
+        const status = error.response?.status;
         const message = error.response?.data?.message ?? "Error en la API";
-        throw new Error(message);
+        throw new ApiIntiError(status ? `[${status}] ${message}` : message, status);
       },
     );
   }
 
   /**
-   * Establece el token de autenticación Bearer para consumir la API.
-   * Debe ejecutarse antes de realizar cualquier consulta.
+   * Configura o actualiza el token de autenticacion Bearer.
+   *
+   * Debes llamar este metodo antes de cualquier consulta si no enviaste
+   * el token en el constructor. El token se reutiliza en todas las peticiones.
+   *
    * @param token API Key proporcionada por ApiInti.
+   * @throws {ApiIntiError} Si el token esta vacio o solo tiene espacios.
+   */
+  configToken(token: string): void {
+    const normalizedToken = token?.trim();
+    if (!normalizedToken) {
+      throw new ApiIntiError("El token no puede estar vacío");
+    }
+    this.token = normalizedToken;
+  }
+
+  /**
+   * @deprecated Usa `configToken(token)` en su lugar.
    */
   ConfigToken(token: string): void {
-    if (!token?.trim()) {
-      throw new Error("El token no puede estar vacío");
-    }
-    this.token = token;
+    this.configToken(token);
   }
 
   /**
-   * Obtiene información general de una empresa o contribuyente mediante su RUC.
-   * @param ruc Número de RUC de 11 dígitos.
-   * @returns Datos registrales, dirección y estado del contribuyente.
+   * Obtiene informacion general de un contribuyente por RUC.
+   *
+   * Util para validar razon social, estado del contribuyente y direccion
+   * principal registrada.
+   *
+   * @param ruc Numero de RUC de 11 digitos (solo numeros).
+   * @returns Datos registrales y estado del contribuyente.
+   * @throws {Error} Si no hay token configurado.
+   * @throws {Error} Si el RUC no tiene 11 digitos numericos.
+   * @throws {Error} Si la API responde con error.
    */
   async getInfoByRuc(ruc: string): Promise<InfoByRuc> {
-    this.validateRuc(ruc);
-    const { data } = await this.http.get(`/ruc/${ruc}`);
+    const normalizedRuc = this.validate(ruc, /^\d{11}$/, "RUC debe tener 11 dígitos numéricos");
+    const { data } = await this.http.get<ApiResponse<InfoByRuc>>(
+      endpoints.rucInfo(normalizedRuc),
+    );
     return data.data;
   }
 
   /**
-   * Obtiene la lista de establecimientos vinculados a un RUC.
-   * Incluye sede principal y anexos registrados.
-   * @param ruc Número de RUC de 11 dígitos.
-   * @returns Relación de establecimientos registrados.
+   * Lista los establecimientos asociados a un RUC.
+   *
+   * Incluye sede principal y anexos, con ubicacion y estado de cada uno.
+   *
+   * @param ruc Numero de RUC de 11 digitos (solo numeros).
+   * @returns Coleccion de establecimientos registrados para ese RUC.
+   * @throws {Error} Si no hay token configurado.
+   * @throws {Error} Si el RUC no tiene 11 digitos numericos.
+   * @throws {Error} Si la API responde con error.
    */
   async getEstablishmentsByRuc(ruc: string): Promise<EstablishmentsByRuc> {
-    this.validateRuc(ruc);
-    const { data } = await this.http.get(`/ruc/${ruc}/establecimientos`);
+    const normalizedRuc = this.validate(ruc, /^\d{11}$/, "RUC debe tener 11 dígitos numéricos");
+    const { data } = await this.http.get<ApiResponse<EstablishmentsByRuc>>(
+      endpoints.rucEstablishments(normalizedRuc),
+    );
     return data.data;
   }
 
   /**
-   * Consulta si una persona identificada por DNI posee RUC asociado.
-   * @param dni Número de DNI de 8 dígitos.
-   * @returns Información del RUC vinculado o resultado negativo.
+   * Consulta si un DNI tiene un RUC asociado.
+   *
+   * La respuesta es un tipo union:
+   * - Si `tieneRuc` es `true`, encontraras datos del RUC.
+   * - Si `tieneRuc` es `false`, recibirás un mensaje informativo.
+   *
+   * @param dni Numero de DNI de 8 digitos (solo numeros).
+   * @returns Resultado con o sin RUC asociado al DNI.
+   * @throws {Error} Si no hay token configurado.
+   * @throws {Error} Si el DNI no tiene 8 digitos numericos.
+   * @throws {Error} Si la API responde con error.
    */
   async getRucByDni(dni: string): Promise<RucByDni> {
-    this.validateDni(dni);
-    const { data } = await this.http.get(`/dni/${dni}/ruc`);
+    const normalizedDni = this.validate(dni, /^\d{8}$/, "DNI debe tener 8 dígitos numéricos");
+    const { data } = await this.http.get<ApiResponse<RucByDni>>(
+      endpoints.dniRuc(normalizedDni),
+    );
     return data.data;
   }
 
   /**
-   * Consulta los datos personales asociados a un DNI.
-   * @param dni Número de DNI de 8 dígitos.
-   * @returns Nombres, apellidos y nombre completo.
+   * Obtiene datos personales basicos asociados a un DNI.
+   *
+   * Entrega nombres, apellidos y nombre completo normalizado.
+   *
+   * @param dni Numero de DNI de 8 digitos (solo numeros).
+   * @returns Informacion personal asociada al DNI.
+   * @throws {Error} Si no hay token configurado.
+   * @throws {Error} Si el DNI no tiene 8 digitos numericos.
+   * @throws {Error} Si la API responde con error.
    */
   async getInfoByDni(dni: string): Promise<InfoByDni> {
-    this.validateDni(dni);
-    const { data } = await this.http.get(`/dni/${dni}`);
+    const normalizedDni = this.validate(dni, /^\d{8}$/, "DNI debe tener 8 dígitos numéricos");
+    const { data } = await this.http.get<ApiResponse<InfoByDni>>(
+      endpoints.dniInfo(normalizedDni),
+    );
     return data.data;
   }
 
   /**
-   * Obtiene el domicilio fiscal registrado de un contribuyente por RUC.
-   * @param ruc Número de RUC de 11 dígitos.
-   * @returns Dirección fiscal completa, ubicación y estado.
+   * Consulta el domicilio fiscal de un contribuyente por RUC.
+   *
+   * Devuelve la direccion detallada (via, numero, interior, lote y ubigeo),
+   * junto al estado y condicion del domicilio.
+   *
+   * @param ruc Numero de RUC de 11 digitos (solo numeros).
+   * @returns Datos de domicilio fiscal y estado del contribuyente.
+   * @throws {Error} Si no hay token configurado.
+   * @throws {Error} Si el RUC no tiene 11 digitos numericos.
+   * @throws {Error} Si la API responde con error.
    */
   async getTaxDomicileByRuc(ruc: string): Promise<TaxDomicileByRuc> {
-    this.validateRuc(ruc);
-    const { data } = await this.http.get(`/ruc/${ruc}/domicilio`);
+    const normalizedRuc = this.validate(ruc, /^\d{11}$/, "RUC debe tener 11 dígitos numéricos");
+    const { data } = await this.http.get<ApiResponse<TaxDomicileByRuc>>(
+      endpoints.rucDomicile(normalizedRuc),
+    );
     return data.data;
   }
 
-  private validateRuc(ruc: string): void {
-    if (!this.token) throw new Error("Token no configurado");
-    if (!/^\d{11}$/.test(ruc))
-      throw new Error("RUC debe tener 11 dígitos numéricos");
+  /**
+   * Valida precondiciones comunes antes de consultar la API.
+   *
+   * Reglas:
+   * - Debe existir token configurado.
+   * - El valor recibido debe cumplir el patron esperado (regex).
+   *
+   * @param value Valor a validar (RUC o DNI).
+   * @param regex Patron de validacion.
+   * @param message Mensaje de error para formato invalido.
+   * @returns Valor normalizado (sin espacios en extremos).
+   * @throws {ApiIntiError} Si no existe token configurado.
+   * @throws {ApiIntiError} Si el valor no cumple el formato esperado.
+   */
+  private validate(value: string, regex: RegExp, message: string): string {
+    const normalizedValue = value?.trim();
+    if (!this.token) throw new ApiIntiError("Token no configurado");
+    if (!regex.test(normalizedValue)) throw new ApiIntiError(message);
+    return normalizedValue;
   }
 
-  private validateDni(dni: string): void {
-    if (!this.token) throw new Error("Token no configurado");
-    if (!/^\d{8}$/.test(dni))
-      throw new Error("DNI debe tener 8 dígitos numéricos");
+  /**
+   * Expone la instancia interna de Axios para casos avanzados.
+   *
+   * Ejemplos de uso:
+   * - agregar interceptores adicionales
+   * - ajustar timeouts por request
+   * - integrar logging o tracing personalizado
+   *
+   * @returns Cliente Axios configurado por esta clase.
+   */
+  get client(): AxiosInstance {
+    return this.http;
   }
 }
 

@@ -1,215 +1,161 @@
-# ApiInti — SDK TypeScript
+# api-inti
 
-Cliente TypeScript para consumir la API de [ApiInti](https://app.apiinti.dev), que permite consultar información de contribuyentes peruanos mediante RUC y DNI.
+Package no oficial para consumir la API de [ApiInti](https://app.apiinti.dev/) desde Node.js y TypeScript.
 
----
+Permite consultar informacion de contribuyentes y personas en Peru usando RUC y DNI, con metodos tipados y validaciones basicas de entrada.
 
-## Instalación
+## Instalacion
 
 ```bash
-npm install axios
+npm install api-inti
 ```
 
-> El SDK usa `axios` como única dependencia externa.
+## Requisitos
 
----
+- Node.js 18 o superior
+- API Key de ApiInti
 
-## Inicio rápido
+## Uso rapido
 
-```typescript
-import ApiInti from "./ApiInti";
+```ts
+import { ApiInti } from "api-inti";
 
 const api = new ApiInti();
-api.ConfigToken("TU_API_KEY");
+api.configToken(process.env.APIINTI_TOKEN ?? "");
 
-const info = await api.getInfoByRuc("20131312955");
+const info = await api.getInfoByRuc("20123456789");
 console.log(info.razonSocial);
 ```
 
----
+Tambien puedes pasar el token en el constructor:
 
-## Configuración
+```ts
+import { ApiInti } from "api-inti";
 
-### `ConfigToken(token: string): void`
-
-Debe llamarse **antes** de cualquier consulta. Lanza un error si el token está vacío.
-
-```typescript
-api.ConfigToken("TU_API_KEY");
+const api = new ApiInti(process.env.APIINTI_TOKEN);
 ```
 
----
+O usar opciones avanzadas:
 
-## Métodos
+```ts
+import { ApiInti } from "api-inti";
+
+const api = new ApiInti({
+  token: process.env.APIINTI_TOKEN,
+  timeout: 15000,
+  baseURL: "https://app.apiinti.dev/api/v1",
+});
+```
+
+## Metodos disponibles
+
+### `configToken(token: string): void`
+
+Configura o actualiza el token Bearer para autenticar todas las solicitudes.
+
+### `ConfigToken(token: string): void` (deprecated)
+
+Se mantiene por compatibilidad con versiones anteriores. Se recomienda usar `configToken`.
 
 ### `getInfoByRuc(ruc: string): Promise<InfoByRuc>`
 
-Obtiene información general de un contribuyente por su RUC.
+Obtiene informacion general de un contribuyente por RUC (11 digitos).
 
-```typescript
-const data = await api.getInfoByRuc("20131312955");
-
-// data: InfoByRuc
-// {
-//   ruc: "20131312955",
-//   razonSocial: "SUPERINTENDENCIA NAC DE ADUANAS Y ADM TRIBUTARIA",
-//   estado: "ACTIVO",
-//   condicionDomicilio: "HABIDO",
-//   ubigeo: "150101",
-//   departamento: "LIMA",
-//   provincia: "LIMA",
-//   distrito: "LIMA",
-//   direccionCompleta: "AV. GARCILAZO DE LA VEGA NRO. 1472",
-//   tipoVia: "AV.",
-//   nombreVia: "GARCILAZO DE LA VEGA",
-//   numero: "1472"
-// }
+```ts
+const data = await api.getInfoByRuc("20123456789");
+console.log(data.ruc, data.razonSocial, data.estado);
 ```
-
----
 
 ### `getEstablishmentsByRuc(ruc: string): Promise<EstablishmentsByRuc>`
 
-Obtiene todos los establecimientos (sede principal y anexos) asociados a un RUC.
+Lista establecimientos (principal y anexos) asociados a un RUC.
 
-```typescript
-const data = await api.getEstablishmentsByRuc("20131312955");
-
-// data: EstablishmentsByRuc
-// {
-//   ruc: "20131312955",
-//   razonSocial: "...",
-//   totalEstablecimientos: 2,
-//   establecimientos: [
-//     { codigo: "0000", tipo: "PRINCIPAL", departamento: "LIMA", ... },
-//     { codigo: "0001", tipo: "ANEXO", departamento: "LIMA", ... }
-//   ]
-// }
+```ts
+const data = await api.getEstablishmentsByRuc("20123456789");
+console.log(data.totalEstablecimientos);
 ```
-
----
 
 ### `getRucByDni(dni: string): Promise<RucByDni>`
 
-Consulta si un DNI tiene RUC asociado. El resultado es un **union type discriminado** por el campo `tieneRuc`.
+Consulta si un DNI (8 digitos) tiene RUC asociado.
 
-```typescript
+```ts
 const data = await api.getRucByDni("12345678");
 
 if (data.tieneRuc) {
-  // data: RucByDniConRuc
-  console.log(data.ruc); // "10123456781"
-  console.log(data.razonSocial); // "PEREZ GARCIA JUAN CARLOS"
+  console.log(data.ruc, data.razonSocial);
 } else {
-  // data: RucByDniSinRuc
-  console.log(data.mensaje); // "No se encontro RUC asociado a este DNI"
+  console.log(data.mensaje);
 }
 ```
-
----
 
 ### `getInfoByDni(dni: string): Promise<InfoByDni>`
 
-Consulta los datos personales asociados a un DNI.
+Obtiene nombres y apellidos asociados a un DNI.
 
-```typescript
+```ts
 const data = await api.getInfoByDni("12345678");
-
-// data: InfoByDni
-// {
-//   dni: "12345678",
-//   nombres: "JUAN CARLOS",
-//   apellidoPaterno: "PEREZ",
-//   apellidoMaterno: "GARCIA",
-//   nombreCompleto: "PEREZ GARCIA JUAN CARLOS"
-// }
+console.log(data.nombreCompleto);
 ```
-
----
 
 ### `getTaxDomicileByRuc(ruc: string): Promise<TaxDomicileByRuc>`
 
-Obtiene el domicilio fiscal registrado de un contribuyente.
+Consulta el domicilio fiscal de un contribuyente por RUC.
 
-```typescript
-const data = await api.getTaxDomicileByRuc("20131312955");
-
-// data: TaxDomicileByRuc
-// {
-//   ruc: "20131312955",
-//   razonSocial: "...",
-//   condicionDomicilio: "HABIDO",
-//   estado: "ACTIVO",
-//   domicilioFiscal: {
-//     ubigeo: "150101",
-//     tipoVia: "AV.",
-//     nombreVia: "GARCILASO DE LA VEGA",
-//     numero: "1472",
-//     interior: null,
-//     lote: null,
-//     departamento: "LIMA",
-//     provincia: "LIMA",
-//     distrito: "LIMA",
-//     direccionCompleta: "AV. GARCILASO DE LA VEGA NRO. 1472, LIMA - LIMA - LIMA"
-//   }
-// }
+```ts
+const data = await api.getTaxDomicileByRuc("20123456789");
+console.log(data.domicilioFiscal.direccionCompleta);
 ```
 
----
+### `client: AxiosInstance` (getter)
 
-## Tipos
+Expone la instancia interna de Axios para casos avanzados (interceptores extra, configuracion custom, etc.).
 
-Todos los tipos están definidos en `ApiInti.types.ts` y pueden importarse directamente:
+## Tipos TypeScript
 
-```typescript
-import type {
-  InfoByRuc,
-  EstablishmentsByRuc,
-  Establecimiento,
-  RucByDni,
-  InfoByDni,
-  DomicilioFiscal,
-  TaxDomicileByRuc,
-} from "./ApiInti.types";
-```
+El paquete incluye declaraciones de tipos para:
 
-### Tipos compartidos
-
-| Tipo                  | Valores posibles                                                            |
-| --------------------- | --------------------------------------------------------------------------- |
-| `EstadoContribuyente` | `"ACTIVO"` \| `"BAJA PROVISIONAL"` \| `"BAJA DEFINITIVA"` \| `"SUSPENDIDO"` |
-| `CondicionDomicilio`  | `"HABIDO"` \| `"NO HABIDO"` \| `"NO HALLADO"` \| `"PENDIENTE"`              |
-
----
+- `ApiIntiOptions`
+- `InfoByRuc`
+- `EstablishmentsByRuc`
+- `RucByDni`
+- `InfoByDni`
+- `TaxDomicileByRuc`
 
 ## Manejo de errores
 
-Todos los métodos lanzan un `Error` con el mensaje devuelto por la API en caso de falla. Se recomienda envolver las llamadas en `try/catch`:
+Este package lanza errores cuando:
 
-```typescript
+- No se configura token (`Token no configurado`)
+- El formato de RUC o DNI es invalido
+- La API responde con error (por ejemplo: `[401] No autorizado`)
+
+Todos los errores del SDK son instancias de `ApiIntiError`.
+
+Ejemplo:
+
+```ts
+import { ApiInti, ApiIntiError } from "api-inti";
+
 try {
-  const data = await api.getInfoByRuc("20131312955");
+  const data = await api.getInfoByDni("12345678");
+  console.log(data);
 } catch (error) {
-  console.error(error.message); // mensaje de la API o "Error en la API"
+  if (error instanceof ApiIntiError) {
+    console.error(error.message, error.status);
+  } else {
+    console.error("Error inesperado", error);
+  }
 }
 ```
 
-### Errores de validación local
+## Scripts de desarrollo
 
-El SDK valida el formato antes de hacer la petición:
-
-| Situación                  | Mensaje                                 |
-| -------------------------- | --------------------------------------- |
-| Token no configurado       | `"Token no configurado"`                |
-| Token vacío                | `"El token no puede estar vacío"`       |
-| RUC con formato incorrecto | `"RUC debe tener 11 dígitos numéricos"` |
-| DNI con formato incorrecto | `"DNI debe tener 8 dígitos numéricos"`  |
-
----
-
-## Estructura de archivos
-
+```bash
+npm run build   # build CJS + ESM + d.ts
+npm run dev     # modo watch
 ```
-├── ApiInti.ts        # Clase principal con los métodos HTTP
-└── ApiInti.types.ts  # Interfaces y tipos de respuesta
-```
+
+## Licencia
+
+MIT

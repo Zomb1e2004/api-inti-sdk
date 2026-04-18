@@ -3,16 +3,14 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "Node",
-
     "strict": true,
-
     "declaration": true,
     "sourceMap": true,
-
-    "esModuleInterop": true,
+    "outDir": "dist",
+    "rootDir": "src",
     "skipLibCheck": true,
-
-    "ignoreDeprecations": "6.0"
+    "ignoreDeprecations": "6.0",
   },
-  "include": ["src", "tests/test.ts"]
+  "include": ["src"],
+  "exclude": ["dist"],
 }
