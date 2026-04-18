@@ -1,4 +1,4 @@
-# api-inti
+# api-inti-dev
 
 Package no oficial para consumir la API de [ApiInti](https://app.apiinti.dev/) desde Node.js y TypeScript.
 
@@ -7,7 +7,7 @@ Permite consultar informacion de contribuyentes y personas en Peru usando RUC y 
 ## Instalacion
 
 ```bash
-npm install api-inti
+npm install api-inti-dev@latest
 ```
 
 ## Requisitos
